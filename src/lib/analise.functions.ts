@@ -36,6 +36,20 @@ export type RelatorioMinimo = {
   gerado_em: string;
 };
 
+type BrasilApiCnpj = {
+  razao_social?: string;
+  nome_fantasia?: string;
+  descricao_situacao_cadastral?: string;
+  data_inicio_atividade?: string;
+  capital_social?: number;
+  porte?: string;
+  uf?: string;
+  municipio?: string;
+  cnae_fiscal?: number | string;
+  cnae_fiscal_descricao?: string;
+  qsa?: { nome_socio?: string; nome?: string; qualificacao_socio?: string }[];
+};
+
 function notaFromScore(score: number): RelatorioMinimo["nota_global"] {
   if (score >= 90) return "A";
   if (score >= 78) return "B";
@@ -58,7 +72,7 @@ export const analisarCnpj = createServerFn({ method: "POST" })
     if (res.status === 404) throw new Error("CNPJ_NAO_ENCONTRADO");
     if (!res.ok) throw new Error("FONTE_INDISPONIVEL");
 
-    const raw = (await res.json()) as Record<string, any>;
+    const raw = (await res.json()) as BrasilApiCnpj;
 
     const situacao: string = String(raw.descricao_situacao_cadastral ?? "DESCONHECIDA").toUpperCase();
     const abertura: string | null = raw.data_inicio_atividade ?? null;
@@ -72,7 +86,7 @@ export const analisarCnpj = createServerFn({ method: "POST" })
     }
 
     const capital = typeof raw.capital_social === "number" ? raw.capital_social : null;
-    const qsa: any[] = Array.isArray(raw.qsa) ? raw.qsa : [];
+    const qsa = Array.isArray(raw.qsa) ? raw.qsa : [];
 
     // Scoring determinístico — pilar cadastral (único verificável nesta fase)
     const discriminacao: { rotulo: string; delta: number }[] = [];
