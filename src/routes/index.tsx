@@ -155,7 +155,7 @@ function Index() {
       <footer className="border-t border-border">
         <div className="mx-auto max-w-6xl px-6 py-8">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Dados cadastrais públicos obtidos da Receita Federal via BrasilAPI. Diagnóstico
+            Dados cadastrais públicos da Receita Federal, obtidos por fontes redundantes. Diagnóstico
             informativo, sem caráter de certidão ou parecer jurídico.
           </p>
         </div>
