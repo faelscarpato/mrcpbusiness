@@ -65,14 +65,53 @@ export const analisarCnpj = createServerFn({ method: "POST" })
     const cnpj = onlyDigits(data.cnpj);
     if (!isValidCnpj(cnpj)) throw new Error("CNPJ_INVALIDO");
 
-    const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
-      headers: { accept: "application/json" },
-    });
+    // Redundância de fontes públicas: BrasilAPI -> ReceitaWS
+    let raw: BrasilApiCnpj | null = null;
+    let naoEncontrado = false;
 
-    if (res.status === 404) throw new Error("CNPJ_NAO_ENCONTRADO");
-    if (!res.ok) throw new Error("FONTE_INDISPONIVEL");
+    try {
+      const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
+        headers: { accept: "application/json" },
+      });
+      if (res.status === 404) naoEncontrado = true;
+      else if (res.ok) raw = (await res.json()) as BrasilApiCnpj;
+      else console.error("brasilapi status", res.status);
+    } catch (e) {
+      console.error("brasilapi fetch falhou", e);
+    }
 
-    const raw = (await res.json()) as BrasilApiCnpj;
+    if (!raw && !naoEncontrado) {
+      try {
+        const res = await fetch(`https://open.cnpja.com/office/${cnpj}`, {
+          headers: { accept: "application/json" },
+        });
+        if (res.status === 404) naoEncontrado = true;
+        else if (res.ok) {
+          const o = (await res.json()) as Record<string, any>;
+          raw = {
+            razao_social: o['company']?.name,
+            nome_fantasia: o['alias'] ?? undefined,
+            descricao_situacao_cadastral: o['status']?.text,
+            data_inicio_atividade: o['founded'],
+            capital_social: o['company']?.equity,
+            porte: o['company']?.size?.text,
+            uf: o['address']?.state,
+            municipio: o['address']?.city,
+            cnae_fiscal: o['mainActivity']?.id,
+            cnae_fiscal_descricao: o['mainActivity']?.text,
+            qsa: (o['company']?.members ?? []).map((m: any) => ({
+              nome_socio: m?.person?.name,
+              qualificacao_socio: m?.role?.text,
+            })),
+          };
+        } else console.error("cnpja status", res.status);
+      } catch (e) {
+        console.error("cnpja fetch falhou", e);
+      }
+    }
+
+    if (naoEncontrado) throw new Error("CNPJ_NAO_ENCONTRADO");
+    if (!raw) throw new Error("FONTE_INDISPONIVEL");
 
     const situacao: string = String(raw.descricao_situacao_cadastral ?? "DESCONHECIDA").toUpperCase();
     const abertura: string | null = raw.data_inicio_atividade ?? null;
