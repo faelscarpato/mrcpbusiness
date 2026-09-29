@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
-import { analisarCnpj } from "@/lib/analise.functions";
+import { useMemo, useState } from "react";
+import { analisarCnpj, notaFromScore, type RelatorioMinimo } from "@/lib/analise.functions";
+import { varrerWeb } from "@/lib/varredura.functions";
 import { formatCnpj, isValidCnpj } from "@/lib/cnpj";
 import { ConsentDialog } from "@/components/ConsentDialog";
 import { RelatorioMinimoView } from "@/components/RelatorioMinimo";
+import { VarreduraWebView } from "@/components/VarreduraWeb";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -39,10 +41,42 @@ function Index() {
   const [cnpj, setCnpj] = useState("");
   const [consentOpen, setConsentOpen] = useState(false);
   const analisar = useServerFn(analisarCnpj);
+  const varrer = useServerFn(varrerWeb);
+
+  const web = useMutation({
+    mutationFn: (r: RelatorioMinimo) =>
+      varrer({
+        data: {
+          cnpj: r.cnpj,
+          razao_social: r.razao_social,
+          nome_fantasia: r.nome_fantasia,
+          municipio: r.municipio,
+          uf: r.uf,
+        },
+      }),
+  });
 
   const mutation = useMutation({
     mutationFn: (valor: string) => analisar({ data: { cnpj: valor } }),
+    onMutate: () => web.reset(),
+    onSuccess: (r) => web.mutate(r),
   });
+
+  const relatorio = useMemo<RelatorioMinimo | undefined>(() => {
+    const r = mutation.data;
+    if (!r || !web.data) return r;
+    const disc = [...r.discriminacao, ...web.data.discriminacao];
+    const score = Math.max(0, Math.min(100, Math.round(r.score_numerico + web.data.discriminacao.reduce((s, d) => s + d.delta, 0))));
+    return {
+      ...r,
+      score_numerico: score,
+      nota_global: notaFromScore(score),
+      cobertura_analisada: 4,
+      discriminacao: disc,
+      pontos_atencao: disc.filter((d) => d.delta < 0).length,
+      indicadores: r.indicadores.map((i) => web.data!.indicadores.find((w) => w.chave === i.chave) ?? i),
+    };
+  }, [mutation.data, web.data]);
 
   const valido = isValidCnpj(cnpj);
 
@@ -125,7 +159,24 @@ function Index() {
           </div>
         )}
 
-        {mutation.data && !mutation.isPending && <RelatorioMinimoView r={mutation.data} />}
+        {relatorio && !mutation.isPending && <RelatorioMinimoView r={relatorio} />}
+        {relatorio && web.isPending && (
+          <div className="mx-auto mt-4 max-w-4xl border border-border bg-surface p-6">
+            <p className="label-kicker">Varredura web em andamento</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Buscando redes sociais, avaliações no Google, Reclame Aqui e citações jurídicas… (até 60s)
+            </p>
+            <div className="mt-4 h-1 w-full overflow-hidden bg-surface-raised">
+              <div className="h-full w-1/3 animate-pulse bg-primary" />
+            </div>
+          </div>
+        )}
+        {web.isError && (
+          <p className="mx-auto mt-4 max-w-4xl text-sm text-signal-warn">
+            A varredura web não pôde ser concluída agora. A nota reflete apenas o pilar cadastral.
+          </p>
+        )}
+        {web.data && <VarreduraWebView v={web.data} />}
 
         {!mutation.data && !mutation.isPending && (
           <div className="mx-auto grid max-w-4xl grid-cols-1 gap-px bg-border sm:grid-cols-3">

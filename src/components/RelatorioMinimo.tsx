@@ -127,8 +127,9 @@ export function RelatorioMinimoView({ r }: { r: Relatorio }) {
           )}
         </ul>
         <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-          Nesta fase o score considera apenas o pilar cadastral. Risco jurídico, reputação de
-          consumo e presença digital constam como não verificados e não influenciam a nota.
+          {r.cobertura_analisada > 1
+            ? "Score composto pelos pilares cadastral, presença digital, risco jurídico e reputação de consumo."
+            : "Score parcial: apenas o pilar cadastral. Os demais pilares são somados ao fim da varredura web."}
         </p>
       </div>
 
