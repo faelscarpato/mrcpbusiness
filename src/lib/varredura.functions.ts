@@ -36,6 +36,7 @@ async function fc(path: string, body: unknown): Promise<any> {
   return res.json();
 }
 
+type RA = { url: string | null; nota: number | null; reclamacoes: number | null; respondidas_pct: number | null; reputacao: string | null; comentarios: string[] };
 type Hit = { url: string; title?: string; description?: string; markdown?: string };
 async function search(query: string, limit = 10, scrape = false): Promise<Hit[]> {
   const r = await fc("/search", {
@@ -136,7 +137,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
       }, { nota: null as number | null, total: null as number | null, comentarios: [] as { texto: string; estrelas?: number }[] }),
 
       // 3. Reclame Aqui
-      safe("reclameaqui", async () => {
+      safe<RA>("reclameaqui", async () => {
         const hits = await search(`site:reclameaqui.com.br/empresa "${nome}"`, 5);
         const alvo = hits.find((h) => /reclameaqui\.com\.br\/empresa\/[^/]+\/?$/.test(h.url) && menciona(`${h.title} ${h.url.replace(/-/g, " ")}`, toks))
           ?? hits.find((h) => /reclameaqui\.com\.br\/empresa\//.test(h.url) && menciona(`${h.title} ${h.url.replace(/-/g, " ")}`, toks));
@@ -199,7 +200,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
         texto: c.texto.slice(0, 280), estrelas: typeof c.estrelas === "number" ? c.estrelas : null, fonte: "Google",
         reclamacao: (typeof c.estrelas === "number" && c.estrelas <= 2) || PALAVRAS_RECLAMACAO.test(c.texto),
       })),
-      ...reclame.comentarios.map((t) => ({ texto: t, estrelas: null, fonte: "Reclame Aqui", reclamacao: true })),
+      ...reclame.comentarios.map((t: string) => ({ texto: t, estrelas: null, fonte: "Reclame Aqui", reclamacao: true })),
       ...comentWeb.map((c) => ({ texto: c.texto, estrelas: null, fonte: c.fonte, reclamacao: PALAVRAS_RECLAMACAO.test(c.texto) })),
     ].slice(0, 15);
 
