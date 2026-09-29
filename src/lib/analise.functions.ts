@@ -50,7 +50,7 @@ type BrasilApiCnpj = {
   qsa?: { nome_socio?: string; nome?: string; qualificacao_socio?: string }[];
 };
 
-function notaFromScore(score: number): RelatorioMinimo["nota_global"] {
+export function notaFromScore(score: number): RelatorioMinimo["nota_global"] {
   if (score >= 90) return "A";
   if (score >= 78) return "B";
   if (score >= 64) return "C";
