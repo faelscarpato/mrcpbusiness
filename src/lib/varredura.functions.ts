@@ -103,6 +103,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
           const ok = menciona(texto, toks) || menciona(texto, toksRazao);
           for (const [rede, re] of REDES) {
             const m = h.url.match(re);
+            if (m && /\/(business|sharer|share|login|help|watch|explore|p|reel|hashtag)\b/i.test(m[0])) continue;
             if (m && !perfis.has(rede)) perfis.set(rede, { rede, url: `https://${m[0]}`, verificado: ok });
           }
           if (!site && ok && !NAO_SITE.test(h.url)) site = new URL(h.url).origin;
@@ -129,7 +130,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
         const nota = typeof j.nota === "number" && j.nota > 0 && j.nota <= 5 ? j.nota : null;
         return {
           nota,
-          total: typeof j.total_avaliacoes === "number" ? j.total_avaliacoes : null,
+          total: typeof j.total_avaliacoes === "number" && j.total_avaliacoes > 0 ? j.total_avaliacoes : null,
           comentarios: [] as { texto: string; estrelas?: number }[],
         };
       }, { nota: null as number | null, total: null as number | null, comentarios: [] as { texto: string; estrelas?: number }[] }),
@@ -185,7 +186,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
     ]);
     const comentWeb2 = (() => {
         return raHits
-          .filter((h) => h.description && menciona(`${h.title} ${h.description}`, toks))
+          .filter((h) => h.description && !/^\s*[#\[]/.test(h.description) && (!social.site || !h.url.includes(new URL(social.site).hostname.replace(/^www\./, "").split(".")[0])) && menciona(`${h.title} ${h.description}`, toks))
           .map((h) => ({ texto: h.description!.slice(0, 280), fonte: new URL(h.url).hostname.replace(/^www\./, "") }));
     })();
 
