@@ -182,7 +182,6 @@ export const varrerWeb = createServerFn({ method: "POST" })
       }, [] as Citacao[]),
 
       // 5. Comentários e reclamações na web aberta
-      Promise.resolve([] as { texto: string; fonte: string }[]),
     ]);
     const comentWeb2 = (() => {
         return raHits
