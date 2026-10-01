@@ -186,7 +186,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
     ]);
     const comentWeb2 = (() => {
         return raHits
-          .filter((h) => h.description && !/^\s*[#\[]/.test(h.description) && (!social.site || !h.url.includes(new URL(social.site).hostname.replace(/^www\./, "").split(".")[0])) && menciona(`${h.title} ${h.description}`, toks))
+          .filter((h) => h.description && !/^\s*[#\[]/.test(h.description) && (!social.site || !h.url.includes(new URL(social.site).hostname.replace(/^www\./, "").split(".")[0] ?? "")) && menciona(`${h.title} ${h.description}`, toks))
           .map((h) => ({ texto: h.description!.slice(0, 280), fonte: new URL(h.url).hostname.replace(/^www\./, "") }));
     })();
 
