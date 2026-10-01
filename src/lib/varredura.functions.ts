@@ -27,6 +27,7 @@ async function fc(path: string, body: unknown): Promise<any> {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${lov}`, "X-Connection-Api-Key": key },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25000),
   });
   if (!res.ok) {
     const t = await res.text();
@@ -93,10 +94,10 @@ export const varrerWeb = createServerFn({ method: "POST" })
     const [social, google, reclame, juri, comentWeb] = await Promise.all([
       // 1. Presença digital — busca + verificação por tokens do nome
       safe("presenca", async () => {
-        const hits = [
-          ...(await search(`"${nome}" instagram OR linkedin OR facebook ${local}`, 10)),
-          ...(await search(`"${nome}" site oficial ${local}`, 6)),
-        ];
+        const hits = (await Promise.all([
+          search(`"${nome}" instagram OR linkedin OR facebook ${local}`, 10),
+          search(`"${nome}" site oficial ${local}`, 6),
+        ])).flat();
         const perfis = new Map<string, PerfilSocial>();
         let site: string | null = null;
         for (const h of hits) {
@@ -116,7 +117,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
         const q = encodeURIComponent(`${nome} ${local}`.trim());
         const r = await fc("/scrape", {
           url: `https://www.google.com/maps/search/${q}`,
-          waitFor: 3000,
+          waitFor: 2000,
           location: { country: "BR", languages: ["pt-BR"] },
           formats: [{
             type: "json",
@@ -167,10 +168,10 @@ export const varrerWeb = createServerFn({ method: "POST" })
 
       // 4. Jurídico — atribuição estrita: CNPJ citado = ALTA; só nome = BAIXA (não pontua)
       safe("juridico", async () => {
-        const hits = [
-          ...(await search(`"${cnpjFmt}" processo OR réu OR reclamada OR executada`, 10)),
-          ...(await search(`"${data.razao_social}" processo jusbrasil OR "diário oficial"`, 8)),
-        ];
+        const hits = (await Promise.all([
+          search(`"${cnpjFmt}" processo OR réu OR reclamada OR executada`, 10),
+          search(`"${data.razao_social}" processo jusbrasil OR "diário oficial"`, 8),
+        ])).flat();
         const vistos = new Set<string>();
         const citacoes: Citacao[] = [];
         for (const h of hits) {
