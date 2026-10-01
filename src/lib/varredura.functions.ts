@@ -81,6 +81,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
     }).parse(d),
   )
   .handler(async ({ data }): Promise<Varredura> => {
+    console.log("varredura inicio", data.cnpj);
     const nome = data.nome_fantasia?.trim() || data.razao_social;
     const toks = tokens(nome);
     const toksRazao = tokens(data.razao_social);
@@ -195,6 +196,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
       }, [] as { texto: string; fonte: string }[]),
     ]);
 
+    console.log("varredura fim", erros);
     // Consolidação de comentários com classificação determinística
     const comentarios: Comentario[] = [
       ...google.comentarios.map((c) => ({
