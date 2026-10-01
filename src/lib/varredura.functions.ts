@@ -27,6 +27,7 @@ async function fc(path: string, body: unknown): Promise<any> {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${lov}`, "X-Connection-Api-Key": key },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25000),
   });
   if (!res.ok) {
     const t = await res.text();
@@ -80,7 +81,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
     }).parse(d),
   )
   .handler(async ({ data }): Promise<Varredura> => {
-    const nome = data.nome_fantasia?.trim() || data.razao_social;
+        const nome = data.nome_fantasia?.trim() || data.razao_social;
     const toks = tokens(nome);
     const toksRazao = tokens(data.razao_social);
     const local = [data.municipio, data.uf].filter(Boolean).join(" ");
@@ -90,13 +91,11 @@ export const varrerWeb = createServerFn({ method: "POST" })
       try { return await f(); } catch (e) { console.error(nomeEtapa, e); erros.push(nomeEtapa); return fb; }
     };
 
-    const [social, google, reclame, juri, comentWeb] = await Promise.all([
+    let raHits: Hit[] = [];
+    const [social, google, reclame, juri] = await Promise.all([
       // 1. Presença digital — busca + verificação por tokens do nome
       safe("presenca", async () => {
-        const hits = [
-          ...(await search(`"${nome}" instagram OR linkedin OR facebook ${local}`, 10)),
-          ...(await search(`"${nome}" site oficial ${local}`, 6)),
-        ];
+        const hits = await search(`"${nome}" site oficial instagram linkedin facebook`, 15);
         const perfis = new Map<string, PerfilSocial>();
         let site: string | null = null;
         for (const h of hits) {
@@ -104,6 +103,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
           const ok = menciona(texto, toks) || menciona(texto, toksRazao);
           for (const [rede, re] of REDES) {
             const m = h.url.match(re);
+            if (m && /\/(business|sharer|share|login|help|watch|explore|p|reel|hashtag)\b/i.test(m[0])) continue;
             if (m && !perfis.has(rede)) perfis.set(rede, { rede, url: `https://${m[0]}`, verificado: ok });
           }
           if (!site && ok && !NAO_SITE.test(h.url)) site = new URL(h.url).origin;
@@ -116,14 +116,13 @@ export const varrerWeb = createServerFn({ method: "POST" })
         const q = encodeURIComponent(`${nome} ${local}`.trim());
         const r = await fc("/scrape", {
           url: `https://www.google.com/maps/search/${q}`,
-          waitFor: 3000,
+          waitFor: 2000,
           location: { country: "BR", languages: ["pt-BR"] },
           formats: [{
             type: "json",
-            prompt: "Extraia a nota média (estrelas) e o total de avaliações do primeiro estabelecimento listado, e até 5 comentários de avaliações com estrelas.",
+            prompt: "Extraia apenas valores visíveis na página: nota média (estrelas) e total de avaliações do primeiro estabelecimento. Se não estiverem visíveis, retorne null.",
             schema: { type: "object", properties: {
               nota: { type: "number" }, total_avaliacoes: { type: "number" },
-              comentarios: { type: "array", items: { type: "object", properties: { texto: { type: "string" }, estrelas: { type: "number" } } } },
             } },
           }],
         });
@@ -131,14 +130,15 @@ export const varrerWeb = createServerFn({ method: "POST" })
         const nota = typeof j.nota === "number" && j.nota > 0 && j.nota <= 5 ? j.nota : null;
         return {
           nota,
-          total: typeof j.total_avaliacoes === "number" ? j.total_avaliacoes : null,
-          comentarios: (Array.isArray(j.comentarios) ? j.comentarios : []).filter((c: any) => c?.texto) as { texto: string; estrelas?: number }[],
+          total: typeof j.total_avaliacoes === "number" && j.total_avaliacoes > 0 ? j.total_avaliacoes : null,
+          comentarios: [] as { texto: string; estrelas?: number }[],
         };
       }, { nota: null as number | null, total: null as number | null, comentarios: [] as { texto: string; estrelas?: number }[] }),
 
       // 3. Reclame Aqui
       safe<RA>("reclameaqui", async () => {
-        const hits = await search(`site:reclameaqui.com.br/empresa "${nome}"`, 5);
+        const hits = await search(`"${nome}" reclame aqui reclamações`, 10);
+        raHits = hits;
         const alvo = hits.find((h) => /reclameaqui\.com\.br\/empresa\/[^/]+\/?$/.test(h.url) && menciona(`${h.title} ${h.url.replace(/-/g, " ")}`, toks))
           ?? hits.find((h) => /reclameaqui\.com\.br\/empresa\//.test(h.url) && menciona(`${h.title} ${h.url.replace(/-/g, " ")}`, toks));
         if (!alvo) return { url: null, nota: null, reclamacoes: null, respondidas_pct: null, reputacao: null, comentarios: [] as string[] };
@@ -167,10 +167,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
 
       // 4. Jurídico — atribuição estrita: CNPJ citado = ALTA; só nome = BAIXA (não pontua)
       safe("juridico", async () => {
-        const hits = [
-          ...(await search(`"${cnpjFmt}" processo OR réu OR reclamada OR executada`, 10)),
-          ...(await search(`"${data.razao_social}" processo jusbrasil OR "diário oficial"`, 8)),
-        ];
+        const hits = await search(`"${cnpjFmt}" processo OR jusbrasil OR "diário oficial"`, 15);
         const vistos = new Set<string>();
         const citacoes: Citacao[] = [];
         for (const h of hits) {
@@ -186,22 +183,21 @@ export const varrerWeb = createServerFn({ method: "POST" })
       }, [] as Citacao[]),
 
       // 5. Comentários e reclamações na web aberta
-      safe("comentarios", async () => {
-        const hits = await search(`"${nome}" avaliações OR reclamação OR opinião clientes`, 8);
-        return hits
-          .filter((h) => h.description && menciona(`${h.title} ${h.description}`, toks))
-          .map((h) => ({ texto: h.description!.slice(0, 280), fonte: new URL(h.url).hostname.replace(/^www\./, "") }));
-      }, [] as { texto: string; fonte: string }[]),
     ]);
+    const comentWeb2 = (() => {
+        return raHits
+          .filter((h) => h.description && !/^\s*[#\[]/.test(h.description) && (!social.site || !h.url.includes(new URL(social.site).hostname.replace(/^www\./, "").split(".")[0] ?? "")) && menciona(`${h.title} ${h.description}`, toks))
+          .map((h) => ({ texto: h.description!.slice(0, 280), fonte: new URL(h.url).hostname.replace(/^www\./, "") }));
+    })();
 
-    // Consolidação de comentários com classificação determinística
+        // Consolidação de comentários com classificação determinística
     const comentarios: Comentario[] = [
       ...google.comentarios.map((c) => ({
         texto: c.texto.slice(0, 280), estrelas: typeof c.estrelas === "number" ? c.estrelas : null, fonte: "Google",
         reclamacao: (typeof c.estrelas === "number" && c.estrelas <= 2) || PALAVRAS_RECLAMACAO.test(c.texto),
       })),
       ...reclame.comentarios.map((t: string) => ({ texto: t, estrelas: null, fonte: "Reclame Aqui", reclamacao: true })),
-      ...comentWeb.map((c) => ({ texto: c.texto, estrelas: null, fonte: c.fonte, reclamacao: PALAVRAS_RECLAMACAO.test(c.texto) })),
+      ...comentWeb2.map((c) => ({ texto: c.texto, estrelas: null, fonte: c.fonte, reclamacao: PALAVRAS_RECLAMACAO.test(c.texto) })),
     ].slice(0, 15);
 
     // Scoring determinístico dos novos pilares
@@ -209,14 +205,14 @@ export const varrerWeb = createServerFn({ method: "POST" })
     const add = (rotulo: string, delta: number) => delta !== 0 && disc.push({ rotulo, delta });
 
     const verificados = social.perfis.filter((p) => p.verificado).length;
-    const presencaFarol: Farol = social.site && verificados >= 2 ? "BOM" : social.site || verificados >= 1 ? "ATENCAO" : "CRITICO";
-    if (!social.site && verificados === 0) add("Nenhum site ou rede social verificada", -4);
+    const presencaFarol: Farol = erros.includes("presenca") ? "NAO_VERIFICADO" : social.site && verificados >= 2 ? "BOM" : social.site || verificados >= 1 ? "ATENCAO" : "CRITICO";
+    if (!erros.includes("presenca") && !social.site && verificados === 0) add("Nenhum site ou rede social verificada", -4);
 
     const alta = juri.filter((c) => c.confianca === "ALTA").length;
     const baixa = juri.length - alta;
     const juriDelta = alta === 0 ? 0 : alta <= 2 ? -4 : alta <= 5 ? -8 : -14;
     add(`${alta} citação(ões) jurídica(s) com CNPJ identificado`, juriDelta);
-    const juriFarol: Farol = alta === 0 ? "BOM" : alta <= 2 ? "ATENCAO" : "CRITICO";
+    const juriFarol: Farol = erros.includes("juridico") ? "NAO_VERIFICADO" : alta === 0 ? "BOM" : alta <= 2 ? "ATENCAO" : "CRITICO";
 
     let repFarol: Farol = "NAO_VERIFICADO";
     const sinais: string[] = [];
