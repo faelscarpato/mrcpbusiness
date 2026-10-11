@@ -87,27 +87,79 @@ export const varrerWeb = createServerFn({ method: "POST" })
       try { return await f(); } catch (e) { console.error(nomeEtapa, e); erros.push(nomeEtapa); return fb; }
     };
 
+    const alvoBase: Alvo = { toksNome: toks, toksRazao, municipio: data.municipio, uf: data.uf, cnpj: data.cnpj };
+    const cidade = data.municipio ?? "";
     let raHits: Hit[] = [];
     const [social, google, reclame, juri] = await Promise.all([
-      // 1. Presença digital — busca + verificação por tokens do nome
+      // 1. Presença digital — desambiguação por nome + cidade + UF + CNPJ + vínculo com site oficial
       safe("presenca", async () => {
-        const hits = await search(`"${nome}" site oficial instagram linkedin facebook`, 15);
-        const perfis = new Map<string, PerfilSocial>();
+        const [h1, h2, h3] = await Promise.all([
+          search(`"${nome}" ${local} instagram OR facebook OR linkedin`, 15),
+          search(`"${nome}" ${cidade} site oficial contato`, 10),
+          search(`"${cnpjFmt}" OR "${data.cnpj}"`, 10).catch(() => [] as Hit[]),
+        ]);
+        const hits = [...h1, ...h2, ...h3];
+        const txt = (h: Hit) => `${h.title ?? ""} ${h.description ?? ""} ${h.url.replace(/[-_]/g, " ")}`;
+
+        // 1a. Site oficial: candidato precisa citar nome; confirmado se a página citar cidade ou CNPJ
         let site: string | null = null;
-        for (const h of hits) {
-          const texto = `${h.title ?? ""} ${h.description ?? ""} ${h.url}`;
-          const ok = menciona(texto, toks) || menciona(texto, toksRazao);
-          for (const [rede, re] of REDES) {
-            const m = h.url.match(re);
-            if (m && /\/(business|sharer|share|login|help|watch|explore|p|reel|hashtag)\b/i.test(m[0])) continue;
-            if (m && !perfis.has(rede)) perfis.set(rede, { rede, url: `https://${m[0]}`, verificado: ok });
-          }
-          if (!site && ok && !NAO_SITE.test(h.url)) site = new URL(h.url).origin;
+        const linksSite = new Set<string>();
+        const candidatosSite = [...new Map(hits
+          .filter((h) => !NAO_SITE.test(h.url) && (menciona(txt(h), toks) || menciona(txt(h), toksRazao)))
+          .map((h) => [new URL(h.url).origin, h])).values()].slice(0, 2);
+        for (const c of candidatosSite) {
+          try {
+            const p = await scrapePagina(new URL(c.url).origin);
+            const av = avaliar(`${txt(c)} ${p.markdown}`, alvoBase);
+            if (av.verificado) {
+              site = new URL(c.url).origin;
+              p.links.forEach((l) => linksSite.add(l.toLowerCase()));
+              break;
+            }
+          } catch (e) { console.error("site", c.url, e); }
         }
-        return { site, perfis: [...perfis.values()] };
+
+        // 1b. Perfis: links do site oficial têm prioridade; depois resultados de busca avaliados
+        type Cand = PerfilSocial & { pontos: number };
+        const melhor = new Map<string, Cand>();
+        const considerar = (rede: string, url: string, texto: string, linkado: boolean) => {
+          const av = avaliar(texto, alvoBase, { linkadoNoSite: linkado });
+          if (av.conflito) return; // homônimo de outra localidade: descartado
+          if (!av.verificado && !menciona(texto, toks) && !menciona(texto, toksRazao)) return;
+          const atual = melhor.get(rede);
+          if (!atual || av.pontos > atual.pontos) melhor.set(rede, { rede, url, verificado: av.verificado, motivos: av.motivos, pontos: av.pontos });
+        };
+        const casar = (u: string) => {
+          for (const [rede, re] of REDES) {
+            const m = u.match(re);
+            if (m && !/\/(business|sharer|share|login|help|watch|explore|p|reel|hashtag|intent|plugins|dialog)\b/i.test(m[0])) return { rede, url: `https://${m[0].replace(/^www\./, "")}` };
+          }
+          return null;
+        };
+        for (const l of linksSite) {
+          const c = casar(l);
+          if (c) considerar(c.rede, c.url, nome, true);
+        }
+        for (const h of hits) {
+          const c = casar(h.url);
+          if (c) considerar(c.rede, c.url, txt(h), false);
+        }
+
+        // 1c. Perfis ainda não confirmados: lê a bio/postagens públicas buscando cidade ou CNPJ
+        const pendentes = [...melhor.values()].filter((p) => !p.verificado).slice(0, 3);
+        await Promise.all(pendentes.map(async (p) => {
+          try {
+            const pg = await scrapePagina(p.url);
+            const av = avaliar(`${nome} ${pg.markdown}`, alvoBase, { linkadoNoSite: !!site && pg.links.some((l) => l.includes(new URL(site!).hostname.replace(/^www\./, ""))) });
+            if (av.conflito) melhor.delete(p.rede);
+            else if (av.verificado) melhor.set(p.rede, { ...p, verificado: true, motivos: [...new Set([...av.motivos, "conteúdo do perfil"])] });
+          } catch { /* perfil fechado/bloqueado: permanece não confirmado */ }
+        }));
+
+        return { site, perfis: [...melhor.values()].map(({ pontos: _p, ...r }) => r) };
       }, { site: null as string | null, perfis: [] as PerfilSocial[] }),
 
-      // 2. Google Maps — estrelas e total
+      // 2. Google Maps — estrelas e total, só se o endereço do estabelecimento bater com a cidade
       safe("google", async () => {
         const q = encodeURIComponent(`${nome} ${local}`.trim());
         const r = await fc("/scrape", {
@@ -116,17 +168,24 @@ export const varrerWeb = createServerFn({ method: "POST" })
           location: { country: "BR", languages: ["pt-BR"] },
           formats: [{
             type: "json",
-            prompt: "Extraia apenas valores visíveis na página: nota média (estrelas) e total de avaliações do primeiro estabelecimento. Se não estiverem visíveis, retorne null.",
+            prompt: `Liste os estabelecimentos visíveis com nome, endereço completo, nota média (estrelas) e total de avaliações. Não invente valores ausentes.`,
             schema: { type: "object", properties: {
-              nota: { type: "number" }, total_avaliacoes: { type: "number" },
+              estabelecimentos: { type: "array", items: { type: "object", properties: {
+                nome: { type: "string" }, endereco: { type: "string" }, nota: { type: "number" }, total_avaliacoes: { type: "number" },
+              } } },
             } },
           }],
         });
         const j = r?.data?.json ?? r?.json ?? {};
-        const nota = typeof j.nota === "number" && j.nota > 0 && j.nota <= 5 ? j.nota : null;
+        const lista: any[] = Array.isArray(j.estabelecimentos) ? j.estabelecimentos : [];
+        const escolhido = lista.find((e) => {
+          const t = `${e?.nome ?? ""} ${e?.endereco ?? ""}`;
+          return (menciona(t, toks) || menciona(t, toksRazao)) && mencionaCidade(String(e?.endereco ?? ""), data.municipio) && !avaliar(t, alvoBase).conflito;
+        });
+        const nota = escolhido && typeof escolhido.nota === "number" && escolhido.nota > 0 && escolhido.nota <= 5 ? escolhido.nota : null;
         return {
           nota,
-          total: typeof j.total_avaliacoes === "number" && j.total_avaliacoes > 0 ? j.total_avaliacoes : null,
+          total: escolhido && typeof escolhido.total_avaliacoes === "number" && escolhido.total_avaliacoes > 0 ? escolhido.total_avaliacoes : null,
           comentarios: [] as { texto: string; estrelas?: number }[],
         };
       }, { nota: null as number | null, total: null as number | null, comentarios: [] as { texto: string; estrelas?: number }[] }),
