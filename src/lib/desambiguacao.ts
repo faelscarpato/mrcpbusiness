@@ -31,7 +31,7 @@ export type Alvo = {
 export function ufsCitadas(texto: string): string[] {
   const out = new Set<string>();
   const re = new RegExp(`(?:[-/,–|(]\\s*)(${UFS.join("|")})\\b`, "g");
-  for (const m of texto.matchAll(re)) out.add(m[1]);
+  for (const m of texto.matchAll(re)) if (m[1]) out.add(m[1]);
   return [...out];
 }
 
