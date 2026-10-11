@@ -202,14 +202,24 @@ export const varrerWeb = createServerFn({ method: "POST" })
           url, waitFor: 2000,
           formats: [{
             type: "json",
-            prompt: "Extraia nota geral (0-10), total de reclamações, percentual de reclamações respondidas, selo/reputação e títulos das últimas reclamações.",
+            prompt: "Extraia nota geral (0-10), total de reclamações, percentual de reclamações respondidas, selo/reputação, títulos das últimas reclamações, CNPJ exibido e cidade/UF da empresa (se visíveis).",
             schema: { type: "object", properties: {
               nota: { type: "number" }, reclamacoes: { type: "number" }, respondidas_pct: { type: "number" },
               reputacao: { type: "string" }, ultimas: { type: "array", items: { type: "string" } },
+              cnpj: { type: "string" }, cidade: { type: "string" }, uf: { type: "string" },
             } },
           }],
         });
         const j = r?.data?.json ?? r?.json ?? {};
+        // Desambiguação: CNPJ diferente ou localidade conflitante => é outra empresa
+        const cnpjPg = String(j.cnpj ?? "").replace(/\D/g, "");
+        const vazio = { url: null, nota: null, reclamacoes: null, respondidas_pct: null, reputacao: null, comentarios: [] as string[] };
+        if (cnpjPg.length === 14 && cnpjPg !== data.cnpj) return vazio;
+        if (cnpjPg !== data.cnpj && (j.cidade || j.uf)) {
+          const loc = `${j.cidade ?? ""} - ${String(j.uf ?? "").toUpperCase()}`;
+          const ufDiff = j.uf && data.uf && String(j.uf).toUpperCase() !== data.uf.toUpperCase();
+          if (ufDiff || (j.cidade && data.municipio && !mencionaCidade(loc, data.municipio))) return vazio;
+        }
         return {
           url,
           nota: typeof j.nota === "number" ? j.nota : null,
@@ -241,7 +251,7 @@ export const varrerWeb = createServerFn({ method: "POST" })
     ]);
     const comentWeb2 = (() => {
         return raHits
-          .filter((h) => h.description && !/^\s*[#\[]/.test(h.description) && (!social.site || !h.url.includes(new URL(social.site).hostname.replace(/^www\./, "").split(".")[0] ?? "")) && menciona(`${h.title} ${h.description}`, toks))
+          .filter((h) => h.description && !/^\s*[#\[]/.test(h.description) && (!social.site || !h.url.includes(new URL(social.site).hostname.replace(/^www\./, "").split(".")[0] ?? "")) && menciona(`${h.title} ${h.description}`, toks) && !avaliar(`${h.title} ${h.description}`, alvoBase).conflito)
           .map((h) => ({ texto: h.description!.slice(0, 280), fonte: new URL(h.url).hostname.replace(/^www\./, "") }));
     })();
 
