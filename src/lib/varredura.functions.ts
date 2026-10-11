@@ -1,10 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { Farol, Indicador } from "./analise.functions";
+import { avaliar, menciona, mencionaCidade, tokens, type Alvo } from "./desambiguacao";
 
 const GATEWAY = "https://connector-gateway.lovable.dev/firecrawl/v2";
 
-export type PerfilSocial = { rede: string; url: string; verificado: boolean };
+export type PerfilSocial = { rede: string; url: string; verificado: boolean; motivos: string[] };
 export type Comentario = { texto: string; estrelas: number | null; fonte: string; reclamacao: boolean };
 export type Citacao = { titulo: string; url: string; confianca: "ALTA" | "BAIXA" };
 
@@ -48,15 +49,10 @@ async function search(query: string, limit = 10, scrape = false): Promise<Hit[]>
   return (Array.isArray(d) ? d : (d?.web ?? [])) as Hit[];
 }
 
-const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-function tokens(nome: string) {
-  const stop = new Set(["ltda", "s/a", "sa", "me", "eireli", "epp", "de", "da", "do", "dos", "das", "e", "comercio", "servicos", "industria"]);
-  return norm(nome).replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((t) => t.length > 2 && !stop.has(t));
-}
-function menciona(texto: string, toks: string[]) {
-  const t = norm(texto);
-  const hits = toks.filter((k) => t.includes(k)).length;
-  return toks.length > 0 && hits >= Math.min(2, toks.length);
+async function scrapePagina(url: string): Promise<{ markdown: string; links: string[] }> {
+  const r = await fc("/scrape", { url, formats: ["markdown", "links"], onlyMainContent: false, waitFor: 1000 });
+  const d = r?.data ?? r ?? {};
+  return { markdown: String(d.markdown ?? "").slice(0, 20000), links: Array.isArray(d.links) ? d.links.map(String) : [] };
 }
 
 const REDES: [string, RegExp][] = [
