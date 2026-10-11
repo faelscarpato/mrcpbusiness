@@ -28,8 +28,13 @@ export function VarreduraWebView({ v }: { v: Varredura }) {
                   <span className="font-semibold">{p.rede}</span>{" "}
                   <span className="text-muted-foreground">{p.url.replace(/^https:\/\//, "")}</span>
                 </a>
-                <span className={`shrink-0 font-mono text-[0.65rem] uppercase tracking-widest ${p.verificado ? "text-signal-good" : "text-signal-warn"}`}>
-                  {p.verificado ? "Verificado" : "Não confirmado"}
+                <span className="flex shrink-0 flex-col items-end">
+                  <span className={`font-mono text-[0.65rem] uppercase tracking-widest ${p.verificado ? "text-signal-good" : "text-signal-warn"}`}>
+                    {p.verificado ? "Verificado" : "Não confirmado"}
+                  </span>
+                  {p.motivos?.length > 0 && (
+                    <span className="text-[0.65rem] text-muted-foreground">{p.motivos.join(" · ")}</span>
+                  )}
                 </span>
               </li>
             ))}
